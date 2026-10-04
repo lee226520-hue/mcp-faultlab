@@ -1,0 +1,14 @@
+{
+  "attacks": [
+    "tool_description_prompt_injection",
+    "tool_result_prompt_injection",
+    "env_exfiltration_request",
+    "schema_drift",
+    "fake_success",
+    "duplicate_side_effect",
+    "infinite_retry",
+    "sensitive_result",
+    "oversized_result",
+    "dangerous_tool_chain"
+  ]
+}

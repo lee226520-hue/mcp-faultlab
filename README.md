@@ -60,6 +60,17 @@ Supported kinds:
 Rules can match `method`, `tool`, and `occurrence`. Use `"every": true` or
 `"occurrence": "all"` to apply a rule to every matching call.
 
+Built-in attack packs are available through the same fault file format:
+
+```json
+{"attacks": ["tool_result_prompt_injection", "sensitive_result", "dangerous_tool_chain"]}
+```
+
+List them with `python3 -m mcp_faultlab packs`. The catalog covers tool
+description injection, tool-result injection, environment-variable exfiltration,
+schema drift, fake success, duplicate side effects, infinite retry, sensitive
+results, oversized results, and dangerous tool chaining.
+
 ## Replay without the real server
 
 ```bash
@@ -144,6 +155,7 @@ before sharing them.
 ```bash
 python3 -m unittest discover -s tests -v
 python3 examples/run_demo.py
+python3 -m mcp_faultlab packs
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).

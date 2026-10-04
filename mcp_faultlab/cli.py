@@ -8,7 +8,7 @@ from pathlib import Path
 from . import __version__
 from .campaign import write_campaign
 from .cassette import load, summary
-from .faults import parse_rules
+from .faults import ATTACK_PACKS, parse_rules
 from .http_proxy import serve_http
 from .proxy import run_proxy
 from .replay import serve
@@ -55,6 +55,8 @@ def build_parser() -> argparse.ArgumentParser:
     campaign.add_argument("--faults", required=True, help="JSON fault list or named cases")
     campaign.add_argument("--out", required=True, help="output directory")
 
+    packs = commands.add_parser("packs", help="list built-in attack packs")
+
     report = commands.add_parser("report", help="write a self-contained HTML report")
     report.add_argument("cassette")
     report.add_argument("--out", required=True, help="HTML output path")
@@ -85,6 +87,10 @@ def main(argv: list[str] | None = None) -> int:
             paths = write_campaign(args.cassette, _json_file(args.faults), args.out)
             for path in paths:
                 print(path)
+            return 0
+        if args.command == "packs":
+            for name in sorted(ATTACK_PACKS):
+                print(name)
             return 0
         if args.command == "report":
             print(write_report(args.cassette, args.out, args.title))

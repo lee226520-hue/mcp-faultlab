@@ -5,6 +5,8 @@
 - add searchable, self-contained HTML failure reports;
 - add a JSON Streamable HTTP proxy with transparent event-stream forwarding;
 - add HTTP integration coverage where local socket binding is available.
+- add ten built-in attack packs and `mcp-faultlab packs` discovery;
+- allow attack packs in the same JSON fault configuration as transport faults.
 
 ## 0.2.0
 
