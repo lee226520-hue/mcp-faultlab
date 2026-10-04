@@ -1,0 +1,17 @@
+name: tool-timeout-recovery
+target:
+  command: python3 examples/demo_server.py
+requests:
+  - id: 1
+    method: tools/call
+    params:
+      name: search
+      arguments: {q: faultlab}
+faults:
+  - kind: timeout
+    method: tools/call
+    delay_ms: 20
+assertions:
+  - no_duplicate_tool_call
+  - final_status: recoverable
+  - max_retries: 2

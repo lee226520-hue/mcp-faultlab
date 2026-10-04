@@ -1,192 +1,80 @@
-"""Concurrent, request-correlating MCP stdio proxy."""
+import json
+import time
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from __future__ import annotations
-
-import shlex
-import subprocess
-import sys
-import threading
-from dataclasses import dataclass
-from typing import Any, TextIO
-
-from .cassette import add_event, new_cassette, save
-from .faults import DropResponse, FaultEngine, FaultRule
-from .protocol import decode, encode, has_id, id_key, is_request, is_response, message_id
+from .runner import _fault_for, _injected_response
+from .redaction import redact
 
 
-@dataclass
-class Pending:
-    message: dict[str, Any]
-    request_sequence: int
-    rules: list[FaultRule]
+def create_http_server(listen, upstream, faults):
+    """Create a controllable HTTP proxy server and its in-memory event list."""
+    host, port = listen.rsplit(":", 1)
+    events = []
 
+    class Handler(BaseHTTPRequestHandler):
+        proxy_upstream = upstream
+        proxy_faults = faults
+        proxy_events = events
 
-def _send(stream: TextIO, message: dict[str, Any], lock: threading.Lock) -> None:
-    with lock:
-        stream.write(encode(message) + "\n")
-        stream.flush()
-
-
-def run_proxy(
-    target: str,
-    rules: list[FaultRule] | None = None,
-    record_path: str | None = None,
-    stdin: TextIO = sys.stdin,
-    stdout: TextIO = sys.stdout,
-) -> int:
-    command = shlex.split(target)
-    if not command:
-        raise ValueError("target command is empty")
-    child = subprocess.Popen(
-        command,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=sys.stderr,
-        text=True,
-        bufsize=1,
-    )
-    assert child.stdin is not None and child.stdout is not None
-
-    cassette = (
-        new_cassette(target, metadata={"transport": "stdio", "redaction": "automatic"})
-        if record_path
-        else None
-    )
-    engine = FaultEngine(rules)
-    pending: dict[str, Pending] = {}
-    pending_lock = threading.Lock()
-    output_lock = threading.Lock()
-    cassette_lock = threading.Lock()
-    stop = threading.Event()
-    sequence = 0
-    sequence_lock = threading.Lock()
-    delivery_threads: list[threading.Thread] = []
-    delivery_lock = threading.Lock()
-
-    def next_sequence() -> int:
-        nonlocal sequence
-        with sequence_lock:
-            sequence += 1
-            return sequence
-
-    def record(direction: str, message: dict[str, Any], **extra: Any) -> None:
-        if cassette is None:
-            return
-        with cassette_lock:
-            add_event(
-                cassette,
-                direction,
-                message,
-                sequence=next_sequence(),
-                request_id=message_id(message) if has_id(message) else None,
-                **extra,
-            )
-
-    def target_reader() -> None:
-        def deliver(response: dict[str, Any], context: Pending | None) -> None:
-            delivered = response
-            fault_kind: str | None = None
-            if context and context.rules:
-                for rule in context.rules:
-                    fault_kind = rule.kind
-                    try:
-                        delivered = rule.mutate(delivered)
-                    except DropResponse:
-                        delivered = None
-                        break
-
-            if delivered is not None:
-                extra: dict[str, Any] = {}
-                if context:
-                    extra["request_sequence"] = context.request_sequence
-                if fault_kind:
-                    extra["fault"] = fault_kind
-                    extra["message_before_fault"] = response
-                record("server->client", delivered, **extra)
-                _send(stdout, delivered, output_lock)
-            elif context:
-                record(
-                    "server->client",
-                    {"dropped": True, "request_id": message_id(response)},
-                    request_sequence=context.request_sequence,
-                    fault=fault_kind or "drop",
-                    message_before_fault=response,
-                )
-
-        try:
-            for raw in child.stdout:
-                if stop.is_set():
-                    break
-                try:
-                    response = decode(raw)
-                except Exception as exc:
-                    print(f"mcp-faultlab: invalid target message: {exc}", file=sys.stderr)
-                    continue
-                if response is None:
-                    continue
-
-                key = id_key(message_id(response)) if is_response(response) else None
-                with pending_lock:
-                    context = pending.pop(key, None) if key is not None else None
-                delivery = threading.Thread(
-                    target=deliver,
-                    args=(response, context),
-                    name="mcp-faultlab-delivery",
-                    daemon=True,
-                )
-                with delivery_lock:
-                    delivery_threads.append(delivery)
-                delivery.start()
-        finally:
-            with delivery_lock:
-                active = list(delivery_threads)
-            for delivery in active:
-                delivery.join(timeout=3)
-            stop.set()
-
-    reader = threading.Thread(target=target_reader, name="mcp-faultlab-target-reader", daemon=True)
-    reader.start()
-
-    try:
-        for raw in stdin:
-            if stop.is_set():
-                break
-            message = decode(raw)
-            if message is None:
-                continue
-            request_sequence = next_sequence()
-            record("client->server", message, request_sequence=request_sequence)
-
-            if is_request(message) and has_id(message):
-                selected = engine.observe(message)
-                with pending_lock:
-                    pending[id_key(message_id(message))] = Pending(message, request_sequence, selected)
-
-            child.stdin.write(encode(message) + "\n")
-            child.stdin.flush()
-    finally:
-        try:
-            child.stdin.close()
-        except Exception:
-            pass
-        if child.poll() is None:
+        def do_POST(self):
+            started = time.time()
+            size = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(size)
             try:
-                # A normal MCP server exits after its stdin reaches EOF. Give
-                # the reader time to forward all in-flight responses before
-                # using termination as the fallback.
-                child.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                child.terminate()
+                request = json.loads(body.decode("utf-8"))
+            except Exception:
+                self.send_error(400, "expected JSON")
+                return
+            sequence = len([event for event in self.proxy_events if event.get("type") == "request"])
+            request_event = {"type": "request", "transport": "http", "sequence": sequence, "time": started, "id": request.get("id", sequence + 1), "method": request.get("method"), "params": request.get("params", {})}
+            self.proxy_events.append(request_event)
+            fault = _fault_for(self.proxy_faults, request)
+            injected, outcome = _injected_response(fault or {})
+            if fault and fault.get("delay_ms"):
+                time.sleep(min(float(fault["delay_ms"]) / 1000, 10))
+            if injected is not None or outcome == "timeout":
+                response = injected or {"error": {"code": "TIMEOUT", "message": "fault injected"}}
+                response_kind = outcome
+            else:
                 try:
-                    child.wait(timeout=1)
-                except subprocess.TimeoutExpired:
-                    child.kill()
-        reader.join(timeout=2)
-        stop.set()
-        try:
-            child.stdout.close()
-        except Exception:
-            pass
-        if cassette is not None and record_path:
-            save(record_path, cassette)
-    return 0
+                    forward = urllib.request.Request(self.proxy_upstream, data=body, headers={"Content-Type": "application/json"}, method="POST")
+                    with urllib.request.urlopen(forward, timeout=30) as upstream_response:
+                        response = json.loads(upstream_response.read().decode("utf-8"))
+                    response_kind = "target"
+                except Exception as exc:
+                    response = {"error": {"code": "UPSTREAM_ERROR", "message": str(exc)}}
+                    response_kind = "error"
+            response_event = {"type": "response", "transport": "http", "sequence": sequence, "time": time.time(), "id": request_event["id"], "response": response, "response_kind": response_kind, "status": "recoverable" if response_kind in ("timeout", "error") else "completed", "latency_ms": round((time.time() - started) * 1000, 2)}
+            if fault:
+                response_event["fault_kind"] = fault.get("kind")
+                response_event["fault"] = {k: v for k, v in fault.items() if k != "result" or len(str(v)) < 500}
+                if fault.get("security"):
+                    response_event["attack_injected"] = True
+            self.proxy_events.append(response_event)
+            encoded = json.dumps(response, ensure_ascii=False).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+        def log_message(self, *_args):
+            return
+
+    return ThreadingHTTPServer((host, int(port)), Handler), events
+
+
+def serve_http(listen, upstream, faults, cassette_path=None):
+    server, events = create_http_server(listen, upstream, faults)
+    try:
+        host, port = server.server_address
+        print("mcp-faultlab HTTP proxy listening on http://%s:%s -> %s" % (host, port, upstream), flush=True)
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+        if cassette_path:
+            with open(cassette_path, "w", encoding="utf-8") as handle:
+                json.dump({"version": 2, "transport": "http", "upstream": upstream, "events": redact(events)}, handle, ensure_ascii=False, indent=2)

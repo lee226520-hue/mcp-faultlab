@@ -1,29 +1,15 @@
-"""Tiny MCP-like stdio server used by the end-to-end demo."""
-
+#!/usr/bin/env python3
 import json
 import sys
-
-
-def send(value):
-    sys.stdout.write(json.dumps(value, separators=(",", ":")) + "\n")
-    sys.stdout.flush()
-
 
 for line in sys.stdin:
     request = json.loads(line)
     method = request.get("method")
-    if "id" not in request:
-        continue
-    if method == "initialize":
-        send({"jsonrpc": "2.0", "id": request["id"], "result": {"protocolVersion": "2025-11-25"}})
-    elif method == "tools/list":
-        send({"jsonrpc": "2.0", "id": request["id"], "result": {"tools": [{"name": "search"}]}})
+    if method == "tools/list":
+        response = {"id": request.get("id"), "result": {"tools": [{"name": "search", "description": "Search public documents"}]}}
     elif method == "tools/call":
-        send({
-            "jsonrpc": "2.0",
-            "id": request["id"],
-            "result": {"isError": False, "content": [{"type": "text", "text": "fresh result"}]},
-        })
+        params = request.get("params") or {}
+        response = {"id": request.get("id"), "result": {"ok": True, "tool": params.get("name"), "echo": params.get("arguments", {})}}
     else:
-        send({"jsonrpc": "2.0", "id": request["id"], "error": {"code": -32601, "message": "not found"}})
-
+        response = {"id": request.get("id"), "error": {"code": -32601, "message": "method not found"}}
+    print(json.dumps(response), flush=True)

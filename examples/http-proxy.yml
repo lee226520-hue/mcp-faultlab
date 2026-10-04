@@ -1,0 +1,7 @@
+name: http-tool-safety
+transport: http
+faults:
+  - kind: tool_result_prompt_injection
+    method: tools/call
+assertions:
+  - no_sensitive_data_in_results

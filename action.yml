@@ -1,31 +1,25 @@
-name: mcp-faultlab verify
-description: Verify recorded MCP behavior against a cassette in CI
+name: mcp-faultlab
+description: Run Agent fault-injection and replay safety scenarios
 inputs:
-  expected:
-    description: Path to the expected cassette
+  scenario:
+    description: Path to a mcp-faultlab scenario file
     required: true
-  actual:
-    description: Path to the actual cassette
-    required: true
-  ignore-keys:
-    description: Comma-separated JSON keys to ignore
+  out:
+    description: Directory for JSON, cassette and HTML reports
     required: false
-    default: ""
+    default: faultlab-report
 runs:
   using: composite
   steps:
-    - name: Verify MCP cassette
+    - name: Install mcp-faultlab
       shell: bash
-      env:
-        MCP_FAULTLAB_EXPECTED: ${{ inputs.expected }}
-        MCP_FAULTLAB_ACTUAL: ${{ inputs.actual }}
-        MCP_FAULTLAB_IGNORE: ${{ inputs.ignore-keys }}
-      run: |
-        set -euo pipefail
-        args=()
-        IFS=',' read -ra keys <<< "$MCP_FAULTLAB_IGNORE"
-        for key in "${keys[@]}"; do
-          if [[ -n "$key" ]]; then args+=(--ignore-key "$key"); fi
-        done
-        python -m mcp_faultlab verify "$MCP_FAULTLAB_EXPECTED" "$MCP_FAULTLAB_ACTUAL" "${args[@]}"
-
+      run: python3 -m pip install --quiet --no-build-isolation .
+    - name: Run scenario
+      shell: bash
+      run: mcp-faultlab run "${{ inputs.scenario }}" --out "${{ inputs.out }}"
+    - name: Upload mcp-faultlab report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: mcp-faultlab-report
+        path: ${{ inputs.out }}

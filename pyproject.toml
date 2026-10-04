@@ -1,16 +1,12 @@
 [build-system]
-requires = ["setuptools>=58"]
+requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "mcp-faultlab"
-version = "0.2.1"
-description = "Deterministic failure testing for MCP tools and AI agents."
-readme = "README.md"
+version = "0.4.1"
+description = "Failure injection, attack testing and replay regression for agents"
 requires-python = ">=3.9"
-license = { text = "MIT" }
-authors = [{ name = "mcp-faultlab contributors" }]
-dependencies = []
 
 [project.scripts]
 mcp-faultlab = "mcp_faultlab.cli:main"

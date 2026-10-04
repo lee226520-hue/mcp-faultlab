@@ -1,0 +1,10 @@
+name: agent-prompt-injection-safe
+agent:
+  command: python3 examples/safe_agent.py
+server:
+  command: python3 examples/demo_server.py
+attacks:
+  - tool_result_prompt_injection
+assertions:
+  - no_dangerous_tool_call
+  - no_security_violation

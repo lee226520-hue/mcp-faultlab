@@ -1,73 +1,60 @@
-"""Serve a recorded cassette as a read-only MCP stdio mock."""
-
-from __future__ import annotations
-
+import json
 import sys
-from typing import Any, TextIO
-
-from .cassette import load
-from .protocol import decode, encode, tool_name
+from collections import defaultdict, deque
 
 
-def _same_request(recorded: dict[str, Any], incoming: dict[str, Any]) -> bool:
-    if recorded.get("method") != incoming.get("method"):
-        return False
-    recorded_tool = tool_name(recorded)
-    incoming_tool = tool_name(incoming)
-    if recorded_tool or incoming_tool:
-        return recorded_tool == incoming_tool
-    return True
+def _responses(cassette):
+    return [event for event in cassette.get("events", []) if event.get("type") == "response"]
 
 
-def serve(path: str, stdin: TextIO = sys.stdin, stdout: TextIO = sys.stdout) -> int:
-    cassette = load(path)
-    events = cassette["events"]
+def _requests(cassette):
+    return [event for event in cassette.get("events", []) if event.get("type") == "request"]
+
+
+def _canonical(value):
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def serve(cassette, input_stream=None, output_stream=None, strict=True):
+    """Serve recorded responses over JSONL, for deterministic agent replay."""
+    input_stream = input_stream or sys.stdin
+    output_stream = output_stream or sys.stdout
+    responses = _responses(cassette)
+    requests = _requests(cassette)
+    by_id = defaultdict(deque)
+    for event in responses:
+        by_id[str(event.get("id"))].append(event)
+    request_by_id = defaultdict(deque)
+    for event in requests:
+        request_by_id[str(event.get("id"))].append(event)
     cursor = 0
-    for raw in stdin:
-        incoming = decode(raw)
-        if incoming is None:
+    for line in input_stream:
+        if not line.strip():
             continue
-        while cursor < len(events) and events[cursor]["direction"] != "client->server":
-            cursor += 1
-        if cursor >= len(events):
-            raise RuntimeError("replay exhausted: no recorded request matches incoming message")
-        recorded_request = events[cursor]["message"]
-        if not _same_request(recorded_request, incoming):
-            raise RuntimeError(
-                f"replay divergence: expected {recorded_request.get('method')!r}, "
-                f"got {incoming.get('method')!r}"
-            )
-        request_event = events[cursor]
-        request_sequence = request_event.get("request_sequence")
-        recorded_id = recorded_request.get("id")
+        request = json.loads(line)
+        request_id = str(request.get("id"))
+        recorded_request = request_by_id[request_id].popleft() if request_by_id[request_id] else None
+        event = by_id[request_id].popleft() if by_id[request_id] else None
+        if not strict and event is None and cursor < len(responses):
+            event = responses[cursor]
+        if not strict and recorded_request is None and cursor < len(requests):
+            recorded_request = requests[cursor]
         cursor += 1
-        response_event = None
-        # Preserve server notifications in their original position, then find
-        # the response associated with this request.  A response is linked by
-        # request_sequence in faultlab cassettes; old cassettes fall back to id.
-        while cursor < len(events) and events[cursor]["direction"] != "client->server":
-            event = events[cursor]
-            if event["direction"] == "server->client":
-                message = event["message"]
-                linked = (
-                    request_sequence is not None
-                    and event.get("request_sequence") == request_sequence
-                ) or (request_sequence is None and message.get("id") == recorded_id)
-                if linked and response_event is None:
-                    response_event = event
-                elif not linked and "id" not in message:
-                    stdout.write(encode(message) + "\n")
-                    stdout.flush()
-            cursor += 1
-        if "id" not in incoming:
-            continue
-        if response_event is None:
-            raise RuntimeError("replay exhausted: recorded request has no response")
-        response = dict(response_event["message"])
-        if response.get("dropped"):
-            continue
-        if "id" in response:
-            response["id"] = incoming["id"]
-        stdout.write(encode(response) + "\n")
-        stdout.flush()
-    return 0
+        mismatch = False
+        if strict and recorded_request:
+            expected = {"method": recorded_request.get("method"), "params": recorded_request.get("params", {})}
+            actual = {"method": request.get("method"), "params": request.get("params", {})}
+            mismatch = _canonical(expected) != _canonical(actual)
+        if mismatch:
+            output = {"id": request.get("id"), "error": {"code": "REPLAY_MISMATCH", "message": "request differs from cassette", "expected": {"method": recorded_request.get("method"), "params": recorded_request.get("params", {})}}}
+        elif event is None:
+            output = {"id": request.get("id"), "error": {"code": "REPLAY_MISS", "message": "no recorded response"}}
+        elif event.get("response_kind") == "timeout":
+            output = {"id": request.get("id"), "error": {"code": "TIMEOUT", "message": "recorded timeout"}}
+        else:
+            output = event.get("response") or {"id": request.get("id"), "result": None}
+            if isinstance(output, dict):
+                output = dict(output)
+                output["id"] = request.get("id", output.get("id"))
+        output_stream.write(json.dumps(output, ensure_ascii=False) + "\n")
+        output_stream.flush()

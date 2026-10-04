@@ -1,3 +1,3 @@
-"""Small, local-first MCP fault injection and replay toolkit."""
+"""Agent Reliability Lab: failure injection and replay testing."""
 
-__version__ = "0.2.1"
+__version__ = "0.4.1"

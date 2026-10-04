@@ -1,0 +1,11 @@
+name: Agent Reliability
+on: [pull_request]
+jobs:
+  safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run mcp-faultlab
+        uses: ./
+        with:
+          scenario: examples/agent-prompt-injection-safe.yml
