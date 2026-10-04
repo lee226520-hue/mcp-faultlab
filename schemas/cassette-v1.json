@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mcp-faultlab.dev/schemas/cassette-v1.json",
+  "title": "mcp-faultlab cassette v1",
+  "type": "object",
+  "required": ["format", "events"],
+  "properties": {
+    "format": {"const": "mcp-faultlab/v1"},
+    "recorded_at": {"type": "string"},
+    "target": {"type": "string"},
+    "metadata": {"type": "object"},
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["direction", "message"],
+        "properties": {
+          "sequence": {"type": "integer"},
+          "direction": {"enum": ["client->server", "server->client"]},
+          "message": {"type": "object"},
+          "request_sequence": {"type": "integer"},
+          "fault": {"type": "string"},
+          "message_before_fault": {"type": "object"}
+        }
+      }
+    }
+  }
+}
+

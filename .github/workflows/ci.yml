@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m compileall -q mcp_faultlab examples
+      - run: mkdir -p artifacts && python examples/run_demo.py --out artifacts/run.json
+      - run: python -m mcp_faultlab inspect artifacts/run.json
+      - run: python -m mcp_faultlab campaign artifacts/run.json --faults examples/campaign.json --out artifacts/cases
+      - run: python -m mcp_faultlab report artifacts/run.json --out artifacts/report.html
+      - run: python -m mcp_faultlab verify artifacts/run.json artifacts/run.json
+      - run: python -m pip install -e .
+      - run: python -m unittest discover -s tests

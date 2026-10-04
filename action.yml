@@ -1,0 +1,31 @@
+name: mcp-faultlab verify
+description: Verify recorded MCP behavior against a cassette in CI
+inputs:
+  expected:
+    description: Path to the expected cassette
+    required: true
+  actual:
+    description: Path to the actual cassette
+    required: true
+  ignore-keys:
+    description: Comma-separated JSON keys to ignore
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Verify MCP cassette
+      shell: bash
+      env:
+        MCP_FAULTLAB_EXPECTED: ${{ inputs.expected }}
+        MCP_FAULTLAB_ACTUAL: ${{ inputs.actual }}
+        MCP_FAULTLAB_IGNORE: ${{ inputs.ignore-keys }}
+      run: |
+        set -euo pipefail
+        args=()
+        IFS=',' read -ra keys <<< "$MCP_FAULTLAB_IGNORE"
+        for key in "${keys[@]}"; do
+          if [[ -n "$key" ]]; then args+=(--ignore-key "$key"); fi
+        done
+        python -m mcp_faultlab verify "$MCP_FAULTLAB_EXPECTED" "$MCP_FAULTLAB_ACTUAL" "${args[@]}"
+

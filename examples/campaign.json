@@ -1,0 +1,24 @@
+{
+  "cases": [
+    {
+      "name": "temporary-tool-error",
+      "faults": [
+        {"kind": "tool_error", "tool": "search", "occurrence": 1, "message": "upstream unavailable"}
+      ]
+    },
+    {
+      "name": "stale-result",
+      "faults": [
+        {"kind": "stale_data", "tool": "search", "occurrence": 1, "replacement": "data from last week"}
+      ]
+    },
+    {
+      "name": "server-error-then-stale",
+      "faults": [
+        {"kind": "server_error", "tool": "search", "occurrence": 1, "message": "dependency failed"},
+        {"kind": "stale_data", "tool": "search", "occurrence": 2, "replacement": "cached fallback"}
+      ]
+    }
+  ]
+}
+
